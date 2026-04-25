@@ -4,6 +4,10 @@ on:
   schedule:
     - cron: "0 */3 * * *"   # every 3 hours
   workflow_dispatch:          # allow manual runs from the GitHub UI
+  push:
+    branches: [master]
+    paths-ignore:
+      - "data/seen_vins.json"  # skip runs triggered by the bot's own commit
 
 jobs:
   check-inventory:
