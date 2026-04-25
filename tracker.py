@@ -138,8 +138,13 @@ def fetch_all_vehicles() -> list[dict]:
         except Exception:
             pass
 
-        # Wait for both GraphQL pages to be captured (or up to 30s)
-        page.wait_for_timeout(15000)
+        # Wait for GraphQL responses to be captured (or up to 30s)
+        page.wait_for_timeout(30000)
+
+        # Save a screenshot for debugging
+        Path("data").mkdir(exist_ok=True)
+        page.screenshot(path="data/debug_screenshot.png", full_page=True)
+        print(f"  Screenshot saved: {page.title()} — {page.url}")
 
         context.close()
 
