@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+.claude/
+data/debug*.png
+data/headers
+data/payload
+data/response.json
+data/run_output.txt
