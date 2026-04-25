@@ -132,11 +132,14 @@ def fetch_all_vehicles() -> list[dict]:
         print("  Opening Toyota inventory page...")
         page.goto(page_url, wait_until="domcontentloaded", timeout=60000)
 
-        # Accept cookie consent if present
+        # Accept cookie consent — Toyota's JS waits for this before firing GraphQL
         try:
-            page.locator("button:has-text('Accept')").click(timeout=5000)
-        except Exception:
-            pass
+            btn = page.locator("button:has-text('Accept')")
+            btn.wait_for(state="visible", timeout=15000)
+            btn.click()
+            print("  Cookie consent accepted.")
+        except Exception as e:
+            print(f"  Cookie consent not found or already accepted: {e}")
 
         # Wait for GraphQL responses to be captured (or up to 30s)
         page.wait_for_timeout(30000)
