@@ -7,11 +7,11 @@ TOYOTA_API_URL = "https://api.search-inventory.toyota.com/graphql"
 # Search filters (from your URL params)
 SEARCH_FILTERS = {
     "zipcode": "94085",
-    "distance": 50,
+    "distance": 250,
     "availability": ["salePendingTrue", "inTransitTrue"],
     "extColor": ["0218"],
     "intColor": ["EE40", "EA40"],
-    "trim": ["4527-2026", "4444-2026"],
+    "trim": ["4444-2026"],
 }
 
 # ---------------------------------------------------------------------------

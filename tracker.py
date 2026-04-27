@@ -24,6 +24,7 @@ INVENTORY_URL = (
     "&intColor[]={int_colors}"
     "&trim[]={trims}"
     "&zipcode={zipcode}"
+    "&distance={distance}"
 )
 
 GRAPHQL_URL = "https://api.search-inventory.toyota.com/graphql"
@@ -96,6 +97,7 @@ def fetch_all_vehicles() -> list[dict]:
         int_colors=",".join(filters.get("intColor", [])),
         trims=",".join(filters.get("trim", [])),
         zipcode=filters["zipcode"],
+        distance=filters.get("distance", 250),
     )
 
     captured_pages: dict[int, dict] = {}
@@ -125,6 +127,7 @@ def fetch_all_vehicles() -> list[dict]:
             profile_dir,
             channel="chrome",
             headless=False,
+            args=["--window-position=9999,9999", "--window-size=1,1"],
         )
         page = context.new_page()
         page.on("response", handle_response)
@@ -132,14 +135,14 @@ def fetch_all_vehicles() -> list[dict]:
         print("  Opening Toyota inventory page...")
         page.goto(page_url, wait_until="domcontentloaded", timeout=60000)
 
-        # Accept cookie consent — Toyota's JS waits for this before firing GraphQL
+        # Accept cookie consent if present
         try:
-            btn = page.locator("button:has-text('Accept')")
-            btn.wait_for(state="visible", timeout=15000)
-            btn.click()
+            btn = page.locator("button.cookie-banner__accept")
+            btn.wait_for(state="attached", timeout=10000)
+            btn.evaluate("el => el.click()")
             print("  Cookie consent accepted.")
-        except Exception as e:
-            print(f"  Cookie consent not found or already accepted: {e}")
+        except Exception:
+            pass  # already accepted from a previous run
 
         # Wait for GraphQL responses to be captured (or up to 30s)
         page.wait_for_timeout(30000)
@@ -177,18 +180,22 @@ def apply_filters(vehicles: list[dict]) -> list[dict]:
         if not availability:
             return True
         status = v.get("inventoryStatus") or ""
-        in_transit = "in transit" in status.lower()
-        sale_pending = "sale pending" in status.lower()
+        s = status.lower()
+        in_transit = "in transit" in s
+        sale_pending = "sale pending" in s
+        in_build = "build phase" in s
         at_dealer = not status  # empty status = at dealer / available now
         if "inTransitTrue" in availability and in_transit:
             return True
         if "salePendingTrue" in availability and sale_pending:
             return True
+        if "inTransitTrue" in availability and in_build:
+            return True  # treat build phase as a future in-transit
         if "atDealerTrue" in availability and at_dealer:
             return True
-        # if availability filter set but none matched, check: original URL includes
-        # salePendingTrue and inTransitTrue but NOT atDealerTrue, so exclude at-dealer
         return False
+
+    max_distance = filters.get("distance")
 
     result = []
     for v in vehicles:
@@ -199,6 +206,8 @@ def apply_filters(vehicles: list[dict]) -> list[dict]:
         if trim_codes and v.get("model", {}).get("modelCd") not in trim_codes:
             continue
         if availability and not matches_availability(v):
+            continue
+        if max_distance and (v.get("distance") or 0) > max_distance:
             continue
         result.append(v)
 
@@ -239,7 +248,8 @@ def format_vehicle(v: dict) -> str:
     price = v.get("price", {}).get("totalMsrp")
     price_str = f"${price:,}" if price else "price TBD"
     status = v.get("inventoryStatus") or "At dealer"
-    vdp = v.get("vdpUrl") or "https://www.toyota.com/search-inventory/model/rav4/"
+    zipcode = config.SEARCH_FILTERS.get("zipcode", "94085")
+    vdp = v.get("vdpUrl") or f"https://www.toyota.com/search-inventory/model/rav4/?vin={vin}&zipcode={zipcode}"
     return (
         f"  VIN:    {vin}\n"
         f"  Model:  {model}\n"
