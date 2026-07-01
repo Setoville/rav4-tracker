@@ -15,22 +15,25 @@ SEARCH_FILTERS = {
 }
 
 # ---------------------------------------------------------------------------
-# Discord webhook — no account/bot required
-# 1. Right-click a Discord channel → Edit Channel → Integrations → Webhooks
-# 2. New Webhook → Copy Webhook URL
-# 3. Set DISCORD_WEBHOOK_URL as a GitHub Actions secret (or paste it below)
+# Discord webhook — no account/bot required.
+# Set DISCORD_WEBHOOK_URL in your environment before running the tracker.
 # ---------------------------------------------------------------------------
-DISCORD_WEBHOOK_URL = os.environ.get(
-    "DISCORD_WEBHOOK_URL",
-    "https://discord.com/api/webhooks/1497648115182731416/WClwYlUsHTeR0jX_g3SiRfK4MXHkpiwtS9PCxHA_oOQeMlMoRpNjpM0tPF2avqHAuBsV",
-)
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 # ---------------------------------------------------------------------------
 # Storage & browser
 # ---------------------------------------------------------------------------
 
-# Path to persistent VIN store
-VIN_STORE_PATH = "data/seen_vins.json"
+# Path to persistent vehicle database
+VEHICLE_DB_PATH = "data/vehicles.sqlite3"
+
+# Run Chrome without opening a visible window. Toyota's inventory page currently
+# does not emit inventory API responses in headless mode on this machine.
+HEADLESS_BROWSER = os.environ.get("HEADLESS_BROWSER", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 # Chrome profile directory — reusing your real Chrome profile passes the WAF
 # challenge without needing to solve it fresh each run.

@@ -4,7 +4,7 @@ RAV4 Tracker — polls Toyota's inventory API and notifies on new vehicles.
 Run on a cron schedule, e.g. every 3 hours.
 """
 
-import json
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 
@@ -117,6 +117,40 @@ def fetch_all_vehicles() -> list[dict]:
         print(f"  Captured page {page_no}/{data['pagination']['totalPages']} "
               f"— {len(data['vehicleSummary'])} vehicles")
 
+    def accept_cookie_consent(page) -> None:
+        selectors = [
+            "button.cookie-banner__accept",
+            "button:has-text('Accept')",
+            "[aria-label='Accept Cookies']",
+        ]
+        for selector in selectors:
+            try:
+                btn = page.locator(selector).first
+                btn.wait_for(state="visible", timeout=5000)
+                btn.click(timeout=5000)
+                print("  Cookie consent accepted.")
+                return
+            except Exception:
+                pass
+        try:
+            clicked = page.evaluate(
+                """
+                () => {
+                  for (const button of document.querySelectorAll("button")) {
+                    if (button.textContent.trim().toLowerCase() === "accept") {
+                      button.click();
+                      return true;
+                    }
+                  }
+                  return false;
+                }
+                """
+            )
+            if clicked:
+                print("  Cookie consent accepted.")
+        except Exception:
+            pass
+
     with sync_playwright() as p:
         # Use a persistent Chrome profile so the WAF token is pre-solved.
         # On first run this seeds the profile; subsequent runs reuse it.
@@ -126,8 +160,11 @@ def fetch_all_vehicles() -> list[dict]:
         context = p.chromium.launch_persistent_context(
             profile_dir,
             channel="chrome",
-            headless=False,
-            args=["--window-position=9999,9999", "--window-size=1,1"],
+            headless=config.HEADLESS_BROWSER,
+            args=[] if config.HEADLESS_BROWSER else [
+                "--window-position=9999,9999",
+                "--window-size=1,1",
+            ],
         )
         page = context.new_page()
         page.on("response", handle_response)
@@ -135,14 +172,7 @@ def fetch_all_vehicles() -> list[dict]:
         print("  Opening Toyota inventory page...")
         page.goto(page_url, wait_until="domcontentloaded", timeout=60000)
 
-        # Accept cookie consent if present
-        try:
-            btn = page.locator("button.cookie-banner__accept")
-            btn.wait_for(state="attached", timeout=10000)
-            btn.evaluate("el => el.click()")
-            print("  Cookie consent accepted.")
-        except Exception:
-            pass  # already accepted from a previous run
+        accept_cookie_consent(page)
 
         # Wait for GraphQL responses to be captured (or up to 30s)
         page.wait_for_timeout(30000)
@@ -215,22 +245,302 @@ def apply_filters(vehicles: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# VIN store
+# Vehicle store
 # ---------------------------------------------------------------------------
 
-def load_seen_vins() -> set[str]:
-    path = Path(config.VIN_STORE_PATH)
-    if not path.exists():
-        return set()
-    with path.open() as f:
-        return set(json.load(f))
-
-
-def save_seen_vins(vins: set[str]) -> None:
-    path = Path(config.VIN_STORE_PATH)
+def connect_db() -> sqlite3.Connection:
+    path = Path(config.VEHICLE_DB_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as f:
-        json.dump(sorted(vins), f, indent=2)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db(conn: sqlite3.Connection) -> None:
+    columns = table_columns(conn, "vehicles")
+    if "last_payload" in columns:
+        migrate_vehicles_table_without_payload(conn)
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS vehicles (
+            vin TEXT PRIMARY KEY,
+            stock_num TEXT,
+            brand TEXT,
+            marketing_series TEXT,
+            year INTEGER,
+            dealer_cd TEXT,
+            dealer_marketing_name TEXT,
+            dealer_website TEXT,
+            vdp_url TEXT,
+            distance REAL,
+            inventory_status TEXT,
+            is_pre_sold INTEGER,
+            total_msrp INTEGER,
+            advertized_price INTEGER,
+            base_msrp INTEGER,
+            dph INTEGER,
+            model_cd TEXT,
+            model_marketing_name TEXT,
+            model_marketing_title TEXT,
+            int_color_cd TEXT,
+            int_color_name TEXT,
+            ext_color_cd TEXT,
+            ext_color_name TEXT,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL
+        );
+
+        DROP TABLE IF EXISTS vehicle_payloads;
+        DROP VIEW IF EXISTS vehicle_summary;
+
+        CREATE VIEW vehicle_summary AS
+        SELECT
+            vin,
+            model_marketing_title AS model,
+            ext_color_name AS exterior,
+            int_color_name AS interior,
+            total_msrp,
+            dealer_marketing_name AS dealer,
+            distance,
+            inventory_status AS status,
+            first_seen_at,
+            last_seen_at
+        FROM vehicles
+        ORDER BY last_seen_at DESC, vin;
+        """
+    )
+    conn.commit()
+
+
+def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {row["name"] for row in rows}
+
+
+def migrate_vehicles_table_without_payload(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        DROP VIEW IF EXISTS vehicle_summary;
+        ALTER TABLE vehicles RENAME TO vehicles_old;
+
+        CREATE TABLE vehicles (
+            vin TEXT PRIMARY KEY,
+            stock_num TEXT,
+            brand TEXT,
+            marketing_series TEXT,
+            year INTEGER,
+            dealer_cd TEXT,
+            dealer_marketing_name TEXT,
+            dealer_website TEXT,
+            vdp_url TEXT,
+            distance REAL,
+            inventory_status TEXT,
+            is_pre_sold INTEGER,
+            total_msrp INTEGER,
+            advertized_price INTEGER,
+            base_msrp INTEGER,
+            dph INTEGER,
+            model_cd TEXT,
+            model_marketing_name TEXT,
+            model_marketing_title TEXT,
+            int_color_cd TEXT,
+            int_color_name TEXT,
+            ext_color_cd TEXT,
+            ext_color_name TEXT,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL
+        );
+
+        INSERT INTO vehicles (
+            vin,
+            stock_num,
+            brand,
+            marketing_series,
+            year,
+            dealer_cd,
+            dealer_marketing_name,
+            dealer_website,
+            vdp_url,
+            distance,
+            inventory_status,
+            is_pre_sold,
+            total_msrp,
+            advertized_price,
+            base_msrp,
+            dph,
+            model_cd,
+            model_marketing_name,
+            model_marketing_title,
+            int_color_cd,
+            int_color_name,
+            ext_color_cd,
+            ext_color_name,
+            first_seen_at,
+            last_seen_at
+        )
+        SELECT
+            vin,
+            stock_num,
+            brand,
+            marketing_series,
+            year,
+            dealer_cd,
+            dealer_marketing_name,
+            dealer_website,
+            vdp_url,
+            distance,
+            inventory_status,
+            is_pre_sold,
+            total_msrp,
+            advertized_price,
+            base_msrp,
+            dph,
+            model_cd,
+            model_marketing_name,
+            model_marketing_title,
+            int_color_cd,
+            int_color_name,
+            ext_color_cd,
+            ext_color_name,
+            first_seen_at,
+            last_seen_at
+        FROM vehicles_old
+        WHERE last_payload IS NOT NULL
+          AND last_payload != '{}';
+
+        DROP TABLE vehicles_old;
+        DROP TABLE IF EXISTS vehicle_payloads;
+        """
+    )
+    conn.commit()
+
+
+def load_tracked_vins(conn: sqlite3.Connection) -> set[str]:
+    rows = conn.execute("SELECT vin FROM vehicles").fetchall()
+    return {row["vin"] for row in rows}
+
+
+def vehicle_db_row(v: dict, now: str) -> dict:
+    price = v.get("price") or {}
+    model = v.get("model") or {}
+    int_color = v.get("intColor") or {}
+    ext_color = v.get("extColor") or {}
+    return {
+        "vin": v.get("vin"),
+        "stock_num": v.get("stockNum"),
+        "brand": v.get("brand"),
+        "marketing_series": v.get("marketingSeries"),
+        "year": v.get("year"),
+        "dealer_cd": v.get("dealerCd"),
+        "dealer_marketing_name": v.get("dealerMarketingName"),
+        "dealer_website": v.get("dealerWebsite"),
+        "vdp_url": v.get("vdpUrl"),
+        "distance": v.get("distance"),
+        "inventory_status": v.get("inventoryStatus"),
+        "is_pre_sold": int(bool(v.get("isPreSold"))),
+        "total_msrp": price.get("totalMsrp"),
+        "advertized_price": price.get("advertizedPrice"),
+        "base_msrp": price.get("baseMsrp"),
+        "dph": price.get("dph"),
+        "model_cd": model.get("modelCd"),
+        "model_marketing_name": model.get("marketingName"),
+        "model_marketing_title": model.get("marketingTitle"),
+        "int_color_cd": int_color.get("colorCd"),
+        "int_color_name": int_color.get("marketingName"),
+        "ext_color_cd": ext_color.get("colorCd"),
+        "ext_color_name": ext_color.get("marketingName"),
+        "first_seen_at": now,
+        "last_seen_at": now,
+    }
+
+
+def save_vehicles(conn: sqlite3.Connection, vehicles: list[dict]) -> None:
+    now = datetime.now().isoformat(timespec="seconds")
+    rows = [vehicle_db_row(v, now) for v in vehicles if v.get("vin")]
+    conn.executemany(
+        """
+        INSERT INTO vehicles (
+            vin,
+            stock_num,
+            brand,
+            marketing_series,
+            year,
+            dealer_cd,
+            dealer_marketing_name,
+            dealer_website,
+            vdp_url,
+            distance,
+            inventory_status,
+            is_pre_sold,
+            total_msrp,
+            advertized_price,
+            base_msrp,
+            dph,
+            model_cd,
+            model_marketing_name,
+            model_marketing_title,
+            int_color_cd,
+            int_color_name,
+            ext_color_cd,
+            ext_color_name,
+            first_seen_at,
+            last_seen_at
+        ) VALUES (
+            :vin,
+            :stock_num,
+            :brand,
+            :marketing_series,
+            :year,
+            :dealer_cd,
+            :dealer_marketing_name,
+            :dealer_website,
+            :vdp_url,
+            :distance,
+            :inventory_status,
+            :is_pre_sold,
+            :total_msrp,
+            :advertized_price,
+            :base_msrp,
+            :dph,
+            :model_cd,
+            :model_marketing_name,
+            :model_marketing_title,
+            :int_color_cd,
+            :int_color_name,
+            :ext_color_cd,
+            :ext_color_name,
+            :first_seen_at,
+            :last_seen_at
+        )
+        ON CONFLICT(vin) DO UPDATE SET
+            stock_num = excluded.stock_num,
+            brand = excluded.brand,
+            marketing_series = excluded.marketing_series,
+            year = excluded.year,
+            dealer_cd = excluded.dealer_cd,
+            dealer_marketing_name = excluded.dealer_marketing_name,
+            dealer_website = excluded.dealer_website,
+            vdp_url = excluded.vdp_url,
+            distance = excluded.distance,
+            inventory_status = excluded.inventory_status,
+            is_pre_sold = excluded.is_pre_sold,
+            total_msrp = excluded.total_msrp,
+            advertized_price = excluded.advertized_price,
+            base_msrp = excluded.base_msrp,
+            dph = excluded.dph,
+            model_cd = excluded.model_cd,
+            model_marketing_name = excluded.model_marketing_name,
+            model_marketing_title = excluded.model_marketing_title,
+            int_color_cd = excluded.int_color_cd,
+            int_color_name = excluded.int_color_name,
+            ext_color_cd = excluded.ext_color_cd,
+            ext_color_name = excluded.ext_color_name,
+            last_seen_at = excluded.last_seen_at
+        """,
+        rows,
+    )
+    conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +575,9 @@ def format_vehicle(v: dict) -> str:
 def notify(new_vehicles: list[dict]) -> None:
     import requests
 
+    if not config.DISCORD_WEBHOOK_URL:
+        raise RuntimeError("DISCORD_WEBHOOK_URL must be set to send notifications")
+
     count = len(new_vehicles)
     lines = [f"**RAV4 Alert: {count} new vehicle{'s' if count > 1 else ''} found!**\n"]
     for v in new_vehicles:
@@ -288,18 +601,21 @@ def main() -> None:
     filtered = apply_filters(all_vehicles)
     print(f"  {len(filtered)} vehicle(s) match your filters")
 
-    current_vins = {v["vin"] for v in filtered if v.get("vin")}
-    seen_vins = load_seen_vins()
-    new_vins = current_vins - seen_vins
-    new_vehicles = [v for v in filtered if v.get("vin") in new_vins]
+    with connect_db() as conn:
+        init_db(conn)
 
-    if new_vehicles:
-        print(f"  NEW: {sorted(new_vins)}")
-        notify(new_vehicles)
-    else:
-        print("  No new vehicles.")
+        current_vins = {v["vin"] for v in filtered if v.get("vin")}
+        tracked_vins = load_tracked_vins(conn)
+        new_vins = current_vins - tracked_vins
+        new_vehicles = [v for v in filtered if v.get("vin") in new_vins]
 
-    save_seen_vins(seen_vins | current_vins)
+        if new_vehicles:
+            print(f"  NEW: {sorted(new_vins)}")
+            notify(new_vehicles)
+        else:
+            print("  No new vehicles.")
+
+        save_vehicles(conn, filtered)
     print("  Done.")
 
 
