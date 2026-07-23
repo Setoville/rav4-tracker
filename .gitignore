@@ -6,6 +6,7 @@ data/headers
 data/payload
 data/response.json
 data/run_output.txt
+data/seen_vins.json
 data/*.log
 data/*.sqlite3
 data/*.sqlite3-*

@@ -157,14 +157,21 @@ def fetch_all_vehicles() -> list[dict]:
         # On a server with a display (xvfb), point CHROME_PROFILE_DIR to a
         # profile directory that was pre-seeded on a real machine.
         profile_dir = config.CHROME_PROFILE_DIR
+        browser_options = {
+            "headless": config.HEADLESS_BROWSER,
+            "args": [] if config.HEADLESS_BROWSER else [
+                "--window-position=0,0",
+                "--window-size=1280,900",
+            ],
+        }
+        if config.BROWSER_EXECUTABLE_PATH:
+            browser_options["executable_path"] = config.BROWSER_EXECUTABLE_PATH
+        else:
+            browser_options["channel"] = "chrome"
+
         context = p.chromium.launch_persistent_context(
             profile_dir,
-            channel="chrome",
-            headless=config.HEADLESS_BROWSER,
-            args=[] if config.HEADLESS_BROWSER else [
-                "--window-position=9999,9999",
-                "--window-size=1,1",
-            ],
+            **browser_options,
         )
         page = context.new_page()
         page.on("response", handle_response)

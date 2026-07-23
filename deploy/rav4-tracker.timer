@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the RAV4 inventory tracker every 20 minutes
+
+[Timer]
+OnActiveSec=2min
+OnUnitActiveSec=20min
+AccuracySec=1min
+Persistent=true
+Unit=rav4-tracker.service
+
+[Install]
+WantedBy=timers.target

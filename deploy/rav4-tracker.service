@@ -1,0 +1,17 @@
+[Unit]
+Description=Toyota RAV4 inventory tracker
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/rav4-tracker
+EnvironmentFile=/home/pi/.config/rav4-tracker/tracker.env
+ExecStartPre=-/usr/bin/curl -fsS -m 10 --retry 5 -o /dev/null ${HEALTHCHECK_URL}/start
+ExecStart=/usr/bin/xvfb-run -a -s "-screen 0 1280x900x24" /home/pi/rav4-tracker/.venv/bin/python -u /home/pi/rav4-tracker/tracker.py
+ExecStopPost=-/usr/bin/curl -fsS -m 10 --retry 5 -o /dev/null ${HEALTHCHECK_URL}/${EXIT_STATUS}
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=multi-user.target

@@ -1,4 +1,5 @@
 import os
+import platform
 from pathlib import Path
 
 # Toyota GraphQL API
@@ -9,7 +10,7 @@ SEARCH_FILTERS = {
     "zipcode": "94085",
     "distance": 250,
     "availability": ["salePendingTrue", "inTransitTrue"],
-    "extColor": ["0218"],
+    "extColor": ["0218", "01L6", "0040"],
     "intColor": ["EE40", "EA40"],
     "trim": ["4444-2026"],
 }
@@ -35,10 +36,18 @@ HEADLESS_BROWSER = os.environ.get("HEADLESS_BROWSER", "false").lower() in {
     "yes",
 }
 
-# Chrome profile directory — reusing your real Chrome profile passes the WAF
-# challenge without needing to solve it fresh each run.
-# Find yours at chrome://version → "Profile Path"
+# Browser executable. macOS uses the installed Chrome channel by default;
+# Linux deployments can point Playwright at the system Chromium package.
+BROWSER_EXECUTABLE_PATH = os.environ.get("BROWSER_EXECUTABLE_PATH")
+
+# Browser profile directory — reusing a persistent profile lets WAF/browser
+# state survive between runs.
+default_profile_dir = (
+    Path.home() / "Library/Application Support/Google/Chrome/Default"
+    if platform.system() == "Darwin"
+    else Path.home() / ".local/share/rav4-tracker/chromium-profile"
+)
 CHROME_PROFILE_DIR = os.environ.get(
     "CHROME_PROFILE_DIR",
-    str(Path.home() / "Library/Application Support/Google/Chrome/Default"),
+    str(default_profile_dir),
 )
