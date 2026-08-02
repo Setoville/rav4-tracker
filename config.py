@@ -10,7 +10,7 @@ SEARCH_FILTERS = {
     "zipcode": "94085",
     "distance": 250,
     "availability": ["salePendingTrue", "inTransitTrue"],
-    "extColor": ["0218", "01L6", "0040"],
+    "extColor": ["0218"],
     "intColor": ["EE40", "EA40"],
     "trim": ["4444-2026"],
 }

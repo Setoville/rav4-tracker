@@ -579,22 +579,43 @@ def format_vehicle(v: dict) -> str:
     )
 
 
-def notify(new_vehicles: list[dict]) -> None:
+def post_discord(content: str) -> None:
     import requests
 
     if not config.DISCORD_WEBHOOK_URL:
         raise RuntimeError("DISCORD_WEBHOOK_URL must be set to send notifications")
 
+    resp = requests.post(config.DISCORD_WEBHOOK_URL, json={"content": content})
+    resp.raise_for_status()
+
+
+def notify_status(existing_vins: set[str], new_vins: set[str]) -> None:
+    content = (
+        f"saw existing vins {sorted(existing_vins)}, "
+        f"and new vins {sorted(new_vins)}"
+    )
+    post_discord(content)
+    print("  Discord status notification sent.")
+
+
+def notify_new_vehicles(new_vehicles: list[dict]) -> None:
     count = len(new_vehicles)
     lines = [f"**RAV4 Alert: {count} new vehicle{'s' if count > 1 else ''} found!**\n"]
+    chunks = []
     for v in new_vehicles:
         lines.append(format_vehicle(v))
         lines.append("")
-    content = "\n".join(lines)[:2000]
-
-    resp = requests.post(config.DISCORD_WEBHOOK_URL, json={"content": content})
-    resp.raise_for_status()
-    print("  Discord notification sent.")
+    chunk = ""
+    for line in lines:
+        if chunk and len(chunk) + len(line) > 1900:
+            chunks.append(chunk.rstrip())
+            chunk = ""
+        chunk += line
+    if chunk:
+        chunks.append(chunk.rstrip())
+    for chunk in chunks:
+        post_discord(chunk)
+    print(f"  Discord vehicle notification sent ({len(chunks)} message(s)).")
 
 
 # ---------------------------------------------------------------------------
@@ -615,12 +636,17 @@ def main() -> None:
         tracked_vins = load_tracked_vins(conn)
         new_vins = current_vins - tracked_vins
         new_vehicles = [v for v in filtered if v.get("vin") in new_vins]
+        existing_vins = current_vins - new_vins
 
-        if new_vehicles:
-            print(f"  NEW: {sorted(new_vins)}")
-            notify(new_vehicles)
-        else:
+        print(f"  Existing: {sorted(existing_vins)}")
+        if not new_vehicles:
             print("  No new vehicles.")
+        else:
+            print(f"  NEW: {sorted(new_vins)}")
+
+        notify_status(existing_vins, new_vins)
+        if new_vehicles:
+            notify_new_vehicles(new_vehicles)
 
         save_vehicles(conn, filtered)
     print("  Done.")
