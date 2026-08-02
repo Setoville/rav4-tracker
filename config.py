@@ -28,6 +28,7 @@ HEALTHCHECK_URL = os.environ.get("HEALTHCHECK_URL")
 
 # Path to persistent vehicle database
 VEHICLE_DB_PATH = "data/vehicles.sqlite3"
+AUDIT_LOG_PATH = "data/run_history.jsonl"
 
 # Run Chrome without opening a visible window. Toyota's inventory page currently
 # does not emit inventory API responses in headless mode on this machine.

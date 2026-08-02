@@ -4,6 +4,7 @@ RAV4 Tracker — polls Toyota's inventory API and notifies on new vehicles.
 Run on a cron schedule, e.g. every 3 hours.
 """
 
+import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -84,7 +85,7 @@ query {
 """
 
 
-def fetch_all_vehicles() -> list[dict]:
+def fetch_all_vehicles() -> tuple[list[dict], dict]:
     """
     Launch a headless browser, navigate to Toyota's inventory page, and
     intercept the GraphQL responses the page makes naturally. This bypasses
@@ -217,8 +218,14 @@ def fetch_all_vehicles() -> list[dict]:
     if missing_vins:
         raise RuntimeError(f"Vehicle data missing VINs: {missing_vins}")
 
+    fetch_summary = {
+        "pages_captured": len(pages),
+        "pages_expected": total_pages,
+        "records_reported": total_records,
+        "records_captured": len(vehicles),
+    }
     print(f"  Fetched {len(vehicles)} of {total_records} total vehicles")
-    return vehicles
+    return vehicles, fetch_summary
 
 
 def apply_filters(vehicles: list[dict]) -> list[dict]:
@@ -567,6 +574,34 @@ def save_vehicles(conn: sqlite3.Connection, vehicles: list[dict]) -> None:
     conn.commit()
 
 
+def audit_match(v: dict) -> dict:
+    price = v.get("price") or {}
+    model = v.get("model") or {}
+    int_color = v.get("intColor") or {}
+    ext_color = v.get("extColor") or {}
+    return {
+        "vin": v.get("vin"),
+        "model": model.get("marketingTitle"),
+        "exterior": ext_color.get("marketingName"),
+        "interior": int_color.get("marketingName"),
+        "total_msrp": price.get("totalMsrp"),
+        "dealer": v.get("dealerMarketingName"),
+        "distance": v.get("distance"),
+        "status": v.get("inventoryStatus"),
+    }
+
+
+def write_run_audit(record: dict) -> None:
+    try:
+        path = Path(config.AUDIT_LOG_PATH)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, sort_keys=True) + "\n")
+    except Exception as exc:
+        # An audit-log failure must not hide the actual scan result.
+        print(f"  WARNING: could not write audit log: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Notifications
 # ---------------------------------------------------------------------------
@@ -665,33 +700,56 @@ def notify_healthcheck(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    started_at = datetime.now().isoformat(timespec="seconds")
+    audit = {"started_at": started_at, "status": "failure"}
     print(f"[{datetime.now():%Y-%m-%d %H:%M}] Checking Toyota RAV4 inventory...")
+    try:
+        audit["phase"] = "fetch"
+        all_vehicles, fetch_summary = fetch_all_vehicles()
+        audit.update(fetch_summary)
 
-    all_vehicles = fetch_all_vehicles()
-    filtered = apply_filters(all_vehicles)
-    print(f"  {len(filtered)} vehicle(s) match your filters")
+        audit["phase"] = "filter"
+        filtered = apply_filters(all_vehicles)
+        print(f"  {len(filtered)} vehicle(s) match your filters")
 
-    with connect_db() as conn:
-        init_db(conn)
+        audit["phase"] = "database"
+        with connect_db() as conn:
+            init_db(conn)
 
-        current_vins = {v["vin"] for v in filtered if v.get("vin")}
-        tracked_vins = load_tracked_vins(conn)
-        new_vins = current_vins - tracked_vins
-        new_vehicles = [v for v in filtered if v.get("vin") in new_vins]
-        existing_vins = current_vins - new_vins
+            current_vins = {v["vin"] for v in filtered if v.get("vin")}
+            tracked_vins = load_tracked_vins(conn)
+            new_vins = current_vins - tracked_vins
+            new_vehicles = [v for v in filtered if v.get("vin") in new_vins]
+            existing_vins = current_vins - new_vins
 
-        print(f"  Existing: {sorted(existing_vins)}")
-        if not new_vehicles:
-            print("  No new vehicles.")
-        else:
-            print(f"  NEW: {sorted(new_vins)}")
+            audit.update({
+                "filtered_count": len(filtered),
+                "existing_vins": sorted(existing_vins),
+                "new_vins": sorted(new_vins),
+                "matches": [audit_match(v) for v in filtered],
+            })
+            print(f"  Existing: {sorted(existing_vins)}")
+            if not new_vehicles:
+                print("  No new vehicles.")
+            else:
+                print(f"  NEW: {sorted(new_vins)}")
 
-        save_vehicles(conn, filtered)
+            save_vehicles(conn, filtered)
+
+        audit["phase"] = "notify"
         notify_healthcheck(len(all_vehicles), len(filtered), existing_vins, new_vins)
         notify_status(existing_vins, new_vins)
         if new_vehicles:
             notify_new_vehicles(new_vehicles)
-    print("  Done.")
+        audit["status"] = "success"
+        print("  Done.")
+    except Exception as exc:
+        audit["error"] = f"{type(exc).__name__}: {exc}"
+        print(f"  FAILED during {audit.get('phase', 'startup')}: {exc}")
+        raise
+    finally:
+        audit["finished_at"] = datetime.now().isoformat(timespec="seconds")
+        write_run_audit(audit)
 
 
 if __name__ == "__main__":
