@@ -1,6 +1,7 @@
 """Durable, append-only records of completed and failed scan attempts."""
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -26,13 +27,12 @@ def audit_match(vehicle: dict[str, Any]) -> dict[str, Any]:
 
 
 def write_run_audit(record: dict[str, Any]) -> None:
-    """Append one scan record without masking the scan result if logging fails."""
-    try:
-        # Keep deployments compatible with configs created before audit logging
-        # was introduced. Newer configs may still choose another location.
-        path = Path(getattr(config, "AUDIT_LOG_PATH", "data/run_history.jsonl"))
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as file:
-            file.write(json.dumps(record, sort_keys=True) + "\n")
-    except Exception as exc:
-        print(f"  WARNING: could not write audit log: {exc}")
+    """Append and sync one audit record before reporting a healthy scan."""
+    # Keep deployments compatible with configs created before audit logging was
+    # introduced. Newer configs may still choose another location.
+    path = Path(getattr(config, "AUDIT_LOG_PATH", "data/run_history.jsonl"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as file:
+        file.write(json.dumps(record, sort_keys=True) + "\n")
+        file.flush()
+        os.fsync(file.fileno())

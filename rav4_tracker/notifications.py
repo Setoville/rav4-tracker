@@ -56,11 +56,6 @@ def vehicle_notification_messages(new_vehicles: list[dict[str, Any]]) -> list[st
     return chunks
 
 
-def notify_status(existing_vins: set[str], new_vins: set[str]) -> None:
-    post_discord(f"saw existing vins {sorted(existing_vins)}, and new vins {sorted(new_vins)}")
-    print("  Discord status notification sent.")
-
-
 def notify_new_vehicles(new_vehicles: list[dict[str, Any]]) -> None:
     chunks = vehicle_notification_messages(new_vehicles)
     for chunk in chunks:

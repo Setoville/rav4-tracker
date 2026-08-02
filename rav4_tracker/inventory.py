@@ -69,7 +69,10 @@ def accept_cookie_consent(page: Any) -> None:
         pass
 
 
-def validate_captured_pages(captured_pages: dict[int, dict[str, Any]]) -> tuple[list[Vehicle], dict[str, int]]:
+def validate_captured_pages(
+    captured_pages: dict[int, dict[str, Any]],
+    minimum_total_records: int | None = None,
+) -> tuple[list[Vehicle], dict[str, int]]:
     """Validate paginated GraphQL results before they affect state or alerts."""
     if not captured_pages:
         raise RuntimeError("No GraphQL responses captured — page may not have loaded correctly")
@@ -85,6 +88,14 @@ def validate_captured_pages(captured_pages: dict[int, dict[str, Any]]) -> tuple[
     if len(total_records_values) != 1:
         raise RuntimeError(f"Inconsistent GraphQL totals across pages: {sorted(total_records_values)}")
     total_records = total_records_values.pop()
+    if minimum_total_records is None:
+        # `getattr` keeps existing RevPi configs valid until they are refreshed.
+        minimum_total_records = getattr(config, "MIN_TOTAL_RECORDS", 100)
+    if total_records < minimum_total_records:
+        raise RuntimeError(
+            "Toyota inventory result is implausibly small — "
+            f"captured {total_records}, expected at least {minimum_total_records}"
+        )
     vehicles = [vehicle for page_data in pages for vehicle in page_data["vehicleSummary"]]
     if len(vehicles) != total_records:
         raise RuntimeError(

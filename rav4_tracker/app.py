@@ -2,16 +2,22 @@
 
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 from rav4_tracker.audit import audit_match, write_run_audit
 from rav4_tracker.inventory import apply_filters, fetch_all_vehicles
-from rav4_tracker.notifications import notify_healthcheck, notify_new_vehicles, notify_status
+from rav4_tracker.notifications import notify_healthcheck, notify_new_vehicles
 from rav4_tracker.store import connect_db, init_db, load_tracked_vins, save_vehicles
 
 
 def main() -> None:
     started_at = datetime.now().isoformat(timespec="seconds")
-    audit: dict[str, Any] = {"started_at": started_at, "status": "failure"}
+    audit: dict[str, Any] = {
+        "run_id": str(uuid4()),
+        "started_at": started_at,
+        "status": "failure",
+    }
+    run_completed = False
     print(f"[{datetime.now():%Y-%m-%d %H:%M}] Checking Toyota RAV4 inventory...")
     try:
         audit["phase"] = "fetch"
@@ -41,16 +47,35 @@ def main() -> None:
             save_vehicles(connection, filtered)
 
         audit["phase"] = "notify"
-        notify_healthcheck(len(all_vehicles), len(filtered), existing_vins, new_vins)
-        notify_status(existing_vins, new_vins)
         if new_vehicles:
             notify_new_vehicles(new_vehicles)
+        audit["notifications"] = {
+            "new_vehicle_alert": "sent" if new_vehicles else "not_needed",
+            "healthcheck": "pending",
+        }
+
+        # A healthy Healthchecks ping is deliberately last: a completed scan
+        # means the results were saved, alerted, and durably audited.
         audit["status"] = "success"
+        audit["phase"] = "audit"
+        audit["finished_at"] = datetime.now().isoformat(timespec="seconds")
+        write_run_audit(audit)
+
+        audit["phase"] = "healthcheck"
+        notify_healthcheck(len(all_vehicles), len(filtered), existing_vins, new_vins)
+        run_completed = True
         print("  Done.")
     except Exception as exc:
         audit["error"] = f"{type(exc).__name__}: {exc}"
+        audit["status"] = "failure"
         print(f"  FAILED during {audit.get('phase', 'startup')}: {exc}")
         raise
     finally:
-        audit["finished_at"] = datetime.now().isoformat(timespec="seconds")
-        write_run_audit(audit)
+        if not run_completed:
+            audit["finished_at"] = datetime.now().isoformat(timespec="seconds")
+            try:
+                write_run_audit(audit)
+            except Exception as audit_error:
+                # The nonzero service exit remains the authoritative failure
+                # signal when the disk is also unable to accept an audit record.
+                print(f"  WARNING: could not write failure audit log: {audit_error}")

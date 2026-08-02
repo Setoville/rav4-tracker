@@ -42,6 +42,13 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "missing page"):
             validate_captured_pages(pages)
 
+    def test_validation_rejects_implausibly_small_complete_result(self):
+        pages = {
+            1: {"pagination": {"pageNo": 1, "totalPages": 1, "totalRecords": 1}, "vehicleSummary": [vehicle()]}
+        }
+        with self.assertRaisesRegex(RuntimeError, "implausibly small"):
+            validate_captured_pages(pages, minimum_total_records=100)
+
     def test_validation_returns_sorted_complete_results(self):
         first = vehicle(vin="FIRST")
         second = vehicle(vin="SECOND")
@@ -49,6 +56,6 @@ class InventoryTests(unittest.TestCase):
             2: {"pagination": {"pageNo": 2, "totalPages": 2, "totalRecords": 2}, "vehicleSummary": [second]},
             1: {"pagination": {"pageNo": 1, "totalPages": 2, "totalRecords": 2}, "vehicleSummary": [first]},
         }
-        vehicles, summary = validate_captured_pages(pages)
+        vehicles, summary = validate_captured_pages(pages, minimum_total_records=1)
         self.assertEqual([item["vin"] for item in vehicles], ["FIRST", "SECOND"])
         self.assertEqual(summary["records_captured"], 2)

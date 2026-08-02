@@ -30,6 +30,13 @@ HEALTHCHECK_URL = os.environ.get("HEALTHCHECK_URL")
 VEHICLE_DB_PATH = "data/vehicles.sqlite3"
 AUDIT_LOG_PATH = "data/run_history.jsonl"
 
+# Toyota normally returns thousands of vehicles for the broad query before our
+# client-side filters run. A much smaller response is likely a WAF/API issue,
+# not a genuine empty market, so fail the run rather than silently accepting it.
+MIN_TOTAL_RECORDS = 100
+# Future adaptive guard: use max(MIN_TOTAL_RECORDS, 10% of a rolling median of
+# recent successful result counts) once enough run history has accumulated.
+
 # Run Chrome without opening a visible window. Toyota's inventory page currently
 # does not emit inventory API responses in headless mode on this machine.
 HEADLESS_BROWSER = os.environ.get("HEADLESS_BROWSER", "false").lower() in {
