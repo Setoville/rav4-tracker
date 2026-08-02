@@ -194,11 +194,28 @@ def fetch_all_vehicles() -> list[dict]:
     if not captured_pages:
         raise RuntimeError("No GraphQL responses captured — page may not have loaded correctly")
 
+    pages = sorted(captured_pages.values(), key=lambda d: d["pagination"]["pageNo"])
+    page_numbers = {d["pagination"]["pageNo"] for d in pages}
+    total_pages = max(d["pagination"]["totalPages"] for d in pages)
+    missing_pages = set(range(1, total_pages + 1)) - page_numbers
+    if missing_pages:
+        raise RuntimeError(f"Incomplete GraphQL capture — missing page(s): {sorted(missing_pages)}")
+
+    total_records_values = {d["pagination"]["totalRecords"] for d in pages}
+    if len(total_records_values) != 1:
+        raise RuntimeError(f"Inconsistent GraphQL totals across pages: {sorted(total_records_values)}")
+    total_records = total_records_values.pop()
     vehicles = []
-    total_records = 0
-    for page_data in sorted(captured_pages.values(), key=lambda d: d["pagination"]["pageNo"]):
+    for page_data in pages:
         vehicles.extend(page_data["vehicleSummary"])
-        total_records = page_data["pagination"]["totalRecords"]
+
+    if len(vehicles) != total_records:
+        raise RuntimeError(
+            f"Incomplete vehicle data — captured {len(vehicles)} of {total_records} records"
+        )
+    missing_vins = sum(1 for vehicle in vehicles if not vehicle.get("vin"))
+    if missing_vins:
+        raise RuntimeError(f"Vehicle data missing VINs: {missing_vins}")
 
     print(f"  Fetched {len(vehicles)} of {total_records} total vehicles")
     return vehicles
@@ -618,6 +635,31 @@ def notify_new_vehicles(new_vehicles: list[dict]) -> None:
     print(f"  Discord vehicle notification sent ({len(chunks)} message(s)).")
 
 
+def notify_healthcheck(
+    fetched_count: int,
+    filtered_count: int,
+    existing_vins: set[str],
+    new_vins: set[str],
+) -> None:
+    """Report validated scan/database results to the external dead-man's switch."""
+    import requests
+
+    if not config.HEALTHCHECK_URL:
+        print("  Healthcheck URL not configured; skipping detailed health ping.")
+        return
+    summary = (
+        f"Toyota scan OK; fetched={fetched_count}; filtered={filtered_count}; "
+        f"existing={len(existing_vins)}; new={len(new_vins)}"
+    )
+    resp = requests.post(
+        f"{config.HEALTHCHECK_URL}/0",
+        data=summary,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    print(f"  Healthcheck success sent: {summary}")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -644,11 +686,11 @@ def main() -> None:
         else:
             print(f"  NEW: {sorted(new_vins)}")
 
+        save_vehicles(conn, filtered)
+        notify_healthcheck(len(all_vehicles), len(filtered), existing_vins, new_vins)
         notify_status(existing_vins, new_vins)
         if new_vehicles:
             notify_new_vehicles(new_vehicles)
-
-        save_vehicles(conn, filtered)
     print("  Done.")
 
 

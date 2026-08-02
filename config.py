@@ -20,6 +20,7 @@ SEARCH_FILTERS = {
 # Set DISCORD_WEBHOOK_URL in your environment before running the tracker.
 # ---------------------------------------------------------------------------
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+HEALTHCHECK_URL = os.environ.get("HEALTHCHECK_URL")
 
 # ---------------------------------------------------------------------------
 # Storage & browser
